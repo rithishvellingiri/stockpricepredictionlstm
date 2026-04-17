@@ -3,10 +3,43 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import date
-from utils import fetch_data, preprocess_data, create_sequences, calculate_metrics, predict_next_days
+from utils import fetch_data, preprocess_data, create_sequences, calculate_metrics, predict_next_days, calculate_eda_metrics
 from tensorflow.keras.models import load_model # type: ignore
 import os
 import subprocess
+import sys
+
+# Custom CSS for premium glassmorphism feel
+st.markdown("""
+<style>
+    .main {
+        background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+        color: white;
+    }
+    .stMetric {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(5px);
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 40px;
+        white-space: pre-wrap;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 5px 5px 0px 0px;
+        color: #ddd;
+        padding: 10px 20px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: rgba(255, 255, 255, 0.15) !important;
+        border-bottom: 2px solid #00d2ff !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 st.set_page_config(page_title="Deep Learning Stock Predictor", layout="wide", page_icon="📈")
 
@@ -20,7 +53,7 @@ ticker = st.sidebar.selectbox("Select Stock", tickers)
 
 model_type = st.sidebar.selectbox("Select Model", ["LSTM", "RNN", "CNN"])
 
-START = st.sidebar.date_input("Start Date", pd.to_datetime('2015-01-01'))
+START = st.sidebar.date_input("Start Date", date(2015, 1, 1))
 END = st.sidebar.date_input("End Date", date.today())
 
 seq_length = 60
@@ -40,6 +73,10 @@ if df_clean is None:
     st.error("Error fetching data. Try a different date range or ticker.")
     st.stop()
 
+if len(df_clean) < seq_length + 20: # Ensure enough data for sequences and test set
+    st.error(f"Insufficient data for selected range. Minimum {seq_length + 20} data points required.")
+    st.stop()
+
 data_load_state.text('Loading data... done!')
 
 st.subheader('Raw Data (Recent)')
@@ -47,11 +84,80 @@ st.write(df_clean.tail())
 
 def plot_raw_data():
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_clean.index, y=df_clean['Close'], name="Close Price"))
-    fig.layout.update(title_text='Historical Time Series Data (Close Price)', xaxis_rangeslider_visible=True)
+    fig.add_trace(go.Scatter(x=df_clean.index, y=df_clean['Close'], name="Close Price", line=dict(color='#00d2ff', width=2)))
+    fig.update_layout(
+        template="plotly_dark",
+        title='Historical Time Series Data (Close Price)',
+        xaxis_rangeslider_visible=True,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color="#ffffff")
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 plot_raw_data()
+
+# --- EDA Section ---
+st.divider()
+st.header("📊 Exploratory Data Analysis")
+eda_df = calculate_eda_metrics(df_clean)
+
+tab1, tab2, tab3, tab4 = st.tabs(["Price & MAs", "Volume Analysis", "Daily Returns", "Cumulative Growth"])
+
+with tab1:
+    st.subheader("Price with Moving Averages (50 & 200)")
+    fig_ma = go.Figure()
+    fig_ma.add_trace(go.Scatter(x=eda_df.index, y=eda_df['Close'], name='Close Price', line=dict(color='#0077b6')))
+    fig_ma.add_trace(go.Scatter(x=eda_df.index, y=eda_df['SMA_50'], name='50-day SMA', line=dict(color='#f39c12')))
+    fig_ma.add_trace(go.Scatter(x=eda_df.index, y=eda_df['SMA_200'], name='200-day SMA', line=dict(color='#e74c3c')))
+    fig_ma.update_layout(
+        template="plotly_dark",
+        title="Closing Price Trends",
+        xaxis_title="Date",
+        yaxis_title="Price",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_ma, use_container_width=True)
+
+with tab2:
+    st.subheader("Trading Volume Analysis")
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Bar(x=eda_df.index, y=eda_df['Volume'], name='Volume', marker_color='#9b59b6'))
+    fig_vol.update_layout(
+        template="plotly_dark",
+        title="Daily Trading Volume",
+        xaxis_title="Date",
+        yaxis_title="Volume"
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
+
+with tab3:
+    st.subheader("Daily Returns Distribution")
+    fig_dist = go.Figure()
+    returns_data = eda_df['Daily_Return'].dropna()
+    fig_dist.add_trace(go.Histogram(x=returns_data, nbinsx=100, name='Daily Returns', marker_color='#1abc9c', opacity=0.75))
+    fig_dist.update_layout(
+        template="plotly_dark",
+        title="Volatility Distribution",
+        xaxis_title="Daily Return (%)",
+        yaxis_title="Frequency",
+        bargap=0.05
+    )
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+with tab4:
+    st.subheader("Cumulative Returns (Growth of 1 unit)")
+    fig_cum = go.Figure()
+    fig_cum.add_trace(go.Scatter(x=eda_df.index, y=eda_df['Cumulative_Return'], name='Cumulative Return', line=dict(color='#2ecc71', width=2), fill='tozeroy'))
+    fig_cum.update_layout(
+        template="plotly_dark",
+        title="Growth Over Time",
+        xaxis_title="Date",
+        yaxis_title="Cumulative Return"
+    )
+    st.plotly_chart(fig_cum, use_container_width=True)
+
+st.divider()
 
 # Check if model exists
 model_path = f"models/{ticker}_{model_type}.keras"
@@ -59,8 +165,8 @@ if not os.path.exists(model_path):
     st.warning(f"No pre-trained {model_type} model found for {ticker}.")
     if st.button("Train Model Now"):
         with st.spinner(f"Training {model_type} for {ticker}... This might take a few minutes."):
-            # Re-train using Python subprocess
-            result = subprocess.run(["python", "train.py", "--tickers", ticker, "--epochs", "10"], capture_output=True, text=True)
+            # Re-train using Python subprocess with sys.executable for stability
+            result = subprocess.run([sys.executable, "train.py", "--tickers", ticker, "--epochs", "10"], capture_output=True, text=True)
             if result.returncode == 0:
                 st.success(f"Model {model_type} trained successfully!")
                 st.rerun() # Refresh to load the newly created model
@@ -104,9 +210,15 @@ st.subheader("Test Data Prediction vs Actual")
 test_dates = df_clean.index[seq_length + train_size:]
 
 fig2 = go.Figure()
-fig2.add_trace(go.Scatter(x=test_dates, y=y_test_close.flatten(), name="Actual Close"))
-fig2.add_trace(go.Scatter(x=test_dates, y=y_pred_close.flatten(), name=f"Predicted ({model_type})"))
-fig2.layout.update(title_text='Actual vs Predicted Close Price', xaxis_rangeslider_visible=True)
+fig2.add_trace(go.Scatter(x=test_dates, y=y_test_close.flatten(), name="Actual Close", line=dict(color='#00d2ff')))
+fig2.add_trace(go.Scatter(x=test_dates, y=y_pred_close.flatten(), name=f"Predicted ({model_type})", line=dict(color='#ff9f43', dash='dot')))
+fig2.update_layout(
+    template="plotly_dark",
+    title_text='Actual vs Predicted Close Price',
+    xaxis_rangeslider_visible=True,
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(0,0,0,0)'
+)
 st.plotly_chart(fig2, use_container_width=True)
 
 # --- Next 7 Days Prediction ---
@@ -117,16 +229,22 @@ with st.spinner("Generating future forecast..."):
     future_predictions = predict_next_days(model, last_sequence, scaler, days=7)
     future_close_preds = future_predictions[:, close_idx]
 
-future_dates = pd.date_range(df_clean.index[-1], periods=8)[1:] # next 7 days (BDays might be better but standard calendar is fine for demo)
+future_dates = pd.date_range(df_clean.index[-1], periods=8)[1:] # next 7 days
 
 fig3 = go.Figure()
-# Show last 30 days of actual data plus the 7 days prediction
-past_30_dates = df_clean.index[-30:]
-past_30_close = df_clean['Close'].values[-30:]
+# Show last 45 days of actual data plus the 7 days prediction
+past_45_dates = df_clean.index[-45:]
+past_45_close = df_clean['Close'].values[-45:]
 
-fig3.add_trace(go.Scatter(x=past_30_dates, y=past_30_close, name="Past Close", line=dict(color='blue')))
-fig3.add_trace(go.Scatter(x=future_dates, y=future_close_preds, name="Future Prediction", line=dict(color='orange', dash='dot')))
-fig3.layout.update(title_text='7-Day Forecast', xaxis_rangeslider_visible=True)
+fig3.add_trace(go.Scatter(x=past_45_dates, y=past_45_close, name="Past Close", line=dict(color='#00d2ff', width=2)))
+fig3.add_trace(go.Scatter(x=future_dates, y=future_close_preds, name="Future Prediction", line=dict(color='#f39c12', width=3, dash='dash')))
+fig3.update_layout(
+    template="plotly_dark",
+    title_text='7-Day Forecast',
+    xaxis_rangeslider_visible=True,
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(0,0,0,0)'
+)
 st.plotly_chart(fig3, use_container_width=True)
 
 st.write("Last Predicted Prices for the next 7 days:")

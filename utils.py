@@ -7,7 +7,8 @@ import math
 
 def fetch_data(ticker, start_date, end_date):
     """Fetches historical stock data using yfinance."""
-    df = yf.download(ticker, start=start_date, end=end_date)
+    tkr = yf.Ticker(ticker)
+    df = tkr.history(start=start_date, end=end_date)
     return df
 
 def preprocess_data(df):
@@ -76,3 +77,21 @@ def predict_next_days(model, last_sequence, scaler, days=7):
     predictions_actual = scaler.inverse_transform(predictions_scaled)
     
     return predictions_actual
+
+def calculate_eda_metrics(df):
+    """
+    Calculates various EDA technical indicators and returns a new dataframe with indicators.
+    """
+    eda_df = df.copy()
+    
+    # Simple Moving Averages
+    eda_df['SMA_50'] = eda_df['Close'].rolling(window=50).mean()
+    eda_df['SMA_200'] = eda_df['Close'].rolling(window=200).mean()
+    
+    # Daily Returns
+    eda_df['Daily_Return'] = eda_df['Close'].pct_change()
+    
+    # Cumulative Returns
+    eda_df['Cumulative_Return'] = (1 + eda_df['Daily_Return'].fillna(0)).cumprod()
+    
+    return eda_df
